@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+*.duckdb
+*.duckdb.wal
+.env
+.DS_Store
+dist/
+build/
+*.egg-info/
+.pytest_cache/

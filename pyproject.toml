@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyetl-framework"
+version = "0.1.0"
+description = "A metadata-driven ETL framework for building data warehouses"
+requires-python = ">=3.10"
+dependencies = [
+    "duckdb>=0.10.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "sqlalchemy>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyetl*", "control*"]
