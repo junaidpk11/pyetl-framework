@@ -83,9 +83,8 @@ class Loader:
     def _build_dimension_sql(self, table: TableConfig) -> str:
         """
         Build a DIMENSION table from silver.
-        Selects DISTINCT rows from the source silver table.
-        Derives the key column from the first registered column
-        or uses the source table's primary key.
+        Uses registered columns if available.
+        Falls back to well-known dimension patterns by target_table name.
         """
         source = table.source_table
         target = table.full_target
@@ -98,18 +97,94 @@ class Loader:
                 else c.source_column
                 for c in table.active_columns
             )
-            select = cols
-        else:
-            select = "*"
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT {cols}
+                FROM {source}
+                WHERE 1=1
+                ORDER BY 1
+            """
 
-        return f"""
-            CREATE OR REPLACE TABLE {target} AS
-            SELECT DISTINCT
-                {select}
-            FROM {source}
-            WHERE 1=1
-            ORDER BY 1
-        """
+        # Fall back to named dimension patterns
+        tbl = table.target_table.lower()
+
+        if tbl == "dim_date":
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT
+                    collision_date                              AS date_key,
+                    YEAR(collision_date)                        AS year,
+                    QUARTER(collision_date)                     AS quarter,
+                    MONTH(collision_date)                       AS month,
+                    MONTHNAME(collision_date)                   AS month_name,
+                    DAY(collision_date)                         AS day,
+                    DAYNAME(collision_date)                     AS day_name,
+                    DAYOFWEEK(collision_date)                   AS day_of_week,
+                    CASE WHEN DAYOFWEEK(collision_date) IN (1,7)
+                         THEN true ELSE false END               AS is_weekend
+                FROM {source}
+                WHERE collision_date IS NOT NULL
+                ORDER BY date_key
+            """
+
+        elif tbl == "dim_geography":
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT
+                    local_authority_ons_district                AS geography_key,
+                    local_authority_ons_district,
+                    local_authority_highway,
+                    urban_or_rural_area
+                FROM {source}
+                WHERE local_authority_ons_district IS NOT NULL
+                ORDER BY local_authority_ons_district
+            """
+
+        elif tbl == "dim_severity":
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT
+                    collision_severity                          AS severity_key,
+                    collision_severity                          AS severity_label,
+                    CASE collision_severity
+                        WHEN 'Fatal'   THEN 1
+                        WHEN 'Serious' THEN 2
+                        WHEN 'Slight'  THEN 3
+                        ELSE 99
+                    END                                         AS severity_rank
+                FROM {source}
+                WHERE collision_severity IS NOT NULL
+                ORDER BY severity_rank
+            """
+
+        elif tbl == "dim_vehicle_type":
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT
+                    vehicle_type                                AS vehicle_type_key,
+                    vehicle_type                                AS vehicle_type_label,
+                    CASE
+                        WHEN vehicle_type ILIKE '%motorcycle%' THEN 'Motorcycle'
+                        WHEN vehicle_type ILIKE '%cycle%'      THEN 'Cycle'
+                        WHEN vehicle_type ILIKE '%car%'        THEN 'Car'
+                        WHEN vehicle_type ILIKE '%bus%'
+                          OR vehicle_type ILIKE '%coach%'      THEN 'Bus / Coach'
+                        WHEN vehicle_type ILIKE '%goods%'
+                          OR vehicle_type ILIKE '%van%'        THEN 'Goods / Van'
+                        WHEN vehicle_type ILIKE '%taxi%'       THEN 'Taxi'
+                        ELSE 'Other'
+                    END                                         AS vehicle_category
+                FROM {source}
+                WHERE vehicle_type IS NOT NULL
+                ORDER BY vehicle_type_key
+            """
+
+        else:
+            log.warning(f"    No column config or pattern for {target} — copying source")
+            return f"""
+                CREATE OR REPLACE TABLE {target} AS
+                SELECT DISTINCT * FROM {source}
+            """
 
     # ── Fact builder ──────────────────────────────────────────────────────────
 
